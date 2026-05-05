@@ -1,12 +1,7 @@
 import json
 import os
-import smtplib
 import sys
 from datetime import date
-from email import encoders
-from email.mime.base import MIMEBase
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 import requests
@@ -18,10 +13,12 @@ from contacts_writer import upsert_contacts
 
 load_dotenv()
 
-HANDOFF_URL  = 'https://altmanr91.github.io/CRE-News-Reader/articles_handoff.json'
-COMPS_FILE   = Path('comps.xlsx')
+HANDOFF_URL   = 'https://altmanr91.github.io/CRE-News-Reader/articles_handoff.json'
+COMPS_FILE    = Path('comps.xlsx')
 CONTACTS_FILE = Path('contacts.xlsx')
-RECIPIENT    = 'altmanr91@gmail.com'
+ONEDRIVE_DIR  = 'The Quarry'
+TOKEN_URL     = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token'
+GRAPH_URL     = 'https://graph.microsoft.com/v1.0'
 
 
 def _fetch_handoff() -> dict:
@@ -34,41 +31,44 @@ def _load_or_create(path: Path) -> Workbook:
     if path.exists():
         return load_workbook(path)
     wb = Workbook()
-    wb.remove(wb.active)   # remove default blank sheet
+    wb.remove(wb.active)
     return wb
 
 
-def _send_email(comps_path: Path, contacts_path: Path, date_str: str, counts: dict, new_contacts: int) -> None:
-    password = os.getenv('GMAIL_APP_PASSWORD')
-    if not password:
-        print('  [email] GMAIL_APP_PASSWORD not set — skipping email')
+def _get_access_token(client_id: str, client_secret: str, refresh_token: str) -> str:
+    resp = requests.post(TOKEN_URL, data={
+        'grant_type':    'refresh_token',
+        'refresh_token': refresh_token,
+        'client_id':     client_id,
+        'client_secret': client_secret,
+        'scope':         'offline_access Files.ReadWrite',
+    })
+    resp.raise_for_status()
+    return resp.json()['access_token']
+
+
+def _upload_to_onedrive(comps_path: Path, contacts_path: Path) -> None:
+    client_id     = os.getenv('ONEDRIVE_CLIENT_ID')
+    client_secret = os.getenv('ONEDRIVE_CLIENT_SECRET')
+    refresh_token = os.getenv('ONEDRIVE_REFRESH_TOKEN')
+
+    if not all([client_id, client_secret, refresh_token]):
+        print('  [onedrive] Credentials not set — skipping upload')
         return
 
-    msg = MIMEMultipart()
-    msg['From']    = RECIPIENT
-    msg['To']      = RECIPIENT
-    msg['Subject'] = f'The Quarry — {date_str}'
-
-    body = (
-        f'The Quarry update for {date_str}.\n\n'
-        f'Comps added:  {counts["sales"]} sales, {counts["leases"]} leases, {counts["loans"]} loans\n'
-        f'New contacts: {new_contacts}\n\n'
-        'Both workbooks attached.'
-    )
-    msg.attach(MIMEText(body, 'plain'))
+    access_token = _get_access_token(client_id, client_secret, refresh_token)
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type':  'application/octet-stream',
+    }
 
     for path in (comps_path, contacts_path):
         with open(path, 'rb') as f:
-            part = MIMEBase('application', 'octet-stream')
-            part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename="{path.name}"')
-        msg.attach(part)
-
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-        server.login(RECIPIENT, password)
-        server.send_message(msg)
-    print('  [email] Sent')
+            data = f.read()
+        upload_url = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{path.name}:/content'
+        resp = requests.put(upload_url, headers=headers, data=data)
+        resp.raise_for_status()
+        print(f'  [onedrive] Uploaded {path.name}')
 
 
 def main() -> None:
@@ -99,8 +99,8 @@ def main() -> None:
     comps_wb.save(COMPS_FILE)
     contacts_wb.save(CONTACTS_FILE)
 
-    print('Sending email...')
-    _send_email(COMPS_FILE, CONTACTS_FILE, date_str, counts, new_contacts)
+    print('Uploading to OneDrive...')
+    _upload_to_onedrive(COMPS_FILE, CONTACTS_FILE)
 
     print('Done.')
 
