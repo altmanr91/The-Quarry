@@ -16,7 +16,7 @@ load_dotenv()
 HANDOFF_URL   = 'https://altmanr91.github.io/CRE-News-Reader/articles_handoff.json'
 COMPS_FILE    = Path('comps.xlsx')
 CONTACTS_FILE = Path('contacts.xlsx')
-ONEDRIVE_DIR  = 'Documents/The Quarry'
+ONEDRIVE_DIR  = 'Documents/AI Tools/The Quarry'
 TOKEN_URL     = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token'
 GRAPH_URL     = 'https://graph.microsoft.com/v1.0'
 
