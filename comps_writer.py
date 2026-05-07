@@ -5,6 +5,7 @@ YELLOW = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid'
 
 FMT_DOLLARS = '$#,##0'
 FMT_COMMA   = '#,##0'
+FMT_PCT     = '0.0"%"'
 
 
 def _fmt(ws, row, col_fmt_pairs):
@@ -134,6 +135,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 (8, FMT_DOLLARS),  # Sale Price
                 (9, FMT_DOLLARS),  # $/SF
                 (10, FMT_DOLLARS), # $/Unit
+                (12, FMT_PCT),     # Occupancy %
             ])
             counts['sales'] += 1
 
