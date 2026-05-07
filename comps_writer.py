@@ -3,6 +3,14 @@ from openpyxl.styles import PatternFill
 
 YELLOW = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
 
+FMT_DOLLARS = '$#,##0'
+FMT_COMMA   = '#,##0'
+
+
+def _fmt(ws, row, col_fmt_pairs):
+    for col, fmt in col_fmt_pairs:
+        ws.cell(row, col).number_format = fmt
+
 SALES_COLS  = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
                'Size (SF)', 'Units', 'Sale Price', '$/SF', '$/Unit',
                'Year Built', 'Occupancy %', 'Buyer', 'Seller', 'Broker', 'Lender',
@@ -121,6 +129,12 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 article.get('financing'),
             ])
             _check_duplicate(sales_ws, sales_addrs, addr, 3)
+            _fmt(sales_ws, sales_ws.max_row, [
+                (6, FMT_COMMA),    # Size (SF)
+                (8, FMT_DOLLARS),  # Sale Price
+                (9, FMT_DOLLARS),  # $/SF
+                (10, FMT_DOLLARS), # $/Unit
+            ])
             counts['sales'] += 1
 
         elif tx in LEASE_TYPES:
@@ -140,6 +154,9 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 article.get('link'),
             ])
             _check_duplicate(leases_ws, leases_addrs, addr, 3)
+            _fmt(leases_ws, leases_ws.max_row, [
+                (6, FMT_COMMA),    # Size (SF)
+            ])
             counts['leases'] += 1
 
         elif tx in LOAN_TYPES:
@@ -161,6 +178,12 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 article.get('financing'),
             ])
             _check_duplicate(loans_ws, loans_addrs, addr, 3)
+            _fmt(loans_ws, loans_ws.max_row, [
+                (6, FMT_COMMA),    # Size (SF)
+                (8, FMT_DOLLARS),  # Loan Amount
+                (9, FMT_DOLLARS),  # Loan/SF
+                (10, FMT_DOLLARS), # Loan/Unit
+            ])
             counts['loans'] += 1
 
     return counts
