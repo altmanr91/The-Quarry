@@ -47,6 +47,34 @@ def _get_access_token(client_id: str, client_secret: str, refresh_token: str) ->
     return resp.json()['access_token']
 
 
+def _download_from_onedrive(comps_path: Path, contacts_path: Path) -> None:
+    client_id     = os.getenv('ONEDRIVE_CLIENT_ID')
+    client_secret = os.getenv('ONEDRIVE_CLIENT_SECRET')
+    refresh_token = os.getenv('ONEDRIVE_REFRESH_TOKEN')
+
+    if not all([client_id, client_secret, refresh_token]):
+        print('  [onedrive] Credentials not set — skipping download')
+        return
+
+    try:
+        access_token = _get_access_token(client_id, client_secret, refresh_token)
+    except Exception as e:
+        print(f'  [onedrive] Could not get access token — skipping download: {e}')
+        return
+
+    headers = {'Authorization': f'Bearer {access_token}'}
+
+    for path in (comps_path, contacts_path):
+        url = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{path.name}:/content'
+        resp = requests.get(url, headers=headers)
+        if resp.status_code == 404:
+            print(f'  [onedrive] {path.name} not found — will create fresh')
+            continue
+        resp.raise_for_status()
+        path.write_bytes(resp.content)
+        print(f'  [onedrive] Downloaded {path.name}')
+
+
 def _upload_to_onedrive(comps_path: Path, contacts_path: Path) -> None:
     client_id     = os.getenv('ONEDRIVE_CLIENT_ID')
     client_secret = os.getenv('ONEDRIVE_CLIENT_SECRET')
@@ -82,6 +110,9 @@ def main() -> None:
     date_str = handoff.get('date') or date.today().isoformat()
     articles = handoff.get('articles') or []
     print(f'  {len(articles)} articles for {date_str}')
+
+    print('Downloading workbooks from OneDrive...')
+    _download_from_onedrive(COMPS_FILE, CONTACTS_FILE)
 
     print('Loading workbooks...')
     comps_wb    = _load_or_create(COMPS_FILE)
