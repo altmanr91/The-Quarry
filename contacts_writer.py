@@ -2,19 +2,20 @@ import os
 import anthropic
 from openpyxl import Workbook
 
-CONTACTS_COLS = ['Name', 'Title', 'Company', 'Role', 'Market',
+CONTACTS_COLS = ['Name', 'Title', 'Company', 'Role', 'City', 'State',
                  'Last Seen', 'First Seen', 'Appearances', 'Notes', 'Review Flag']
 
 C_NAME        = 1
 C_TITLE       = 2
 C_COMPANY     = 3
 C_ROLE        = 4
-C_MARKET      = 5
-C_LAST_SEEN   = 6
-C_FIRST_SEEN  = 7
-C_APPEARANCES = 8
-C_NOTES       = 9
-C_REVIEW_FLAG = 10
+C_CITY        = 5
+C_STATE       = 6
+C_LAST_SEEN   = 7
+C_FIRST_SEEN  = 8
+C_APPEARANCES = 9
+C_NOTES       = 10
+C_REVIEW_FLAG = 11
 
 _ai = None
 
@@ -23,6 +24,15 @@ def _client():
     if _ai is None:
         _ai = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
     return _ai
+
+
+def _split_market(market):
+    if not market:
+        return None, None
+    parts = market.rsplit(',', 1)
+    city  = parts[0].strip() if parts else None
+    state = parts[1].strip() if len(parts) > 1 else None
+    return city, state
 
 
 def _get_or_create_tab(wb, name, columns):
@@ -44,11 +54,6 @@ def _load_index(ws):
 
 
 def _classify_people(people_data, narrative):
-    """
-    people_data: list of (name, title, firm)
-    Returns dict: name_lower -> {'cre': bool, 'title': str, 'company': str}
-    Falls back to including everyone with original data if the API call fails.
-    """
     if not people_data:
         return {}
 
@@ -121,26 +126,26 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
     index = _load_index(ws)
     new_count = 0
 
+    ALLOWED_TX = {'sale', 'acquisition', 'lease', 'loan', 'refinance',
+                  'development', 'construction', 'promotion'}
+    SFR_TYPES  = {'single family', 'single-family', 'sfr', 'single family residential'}
+
     for article in articles:
         tx        = (article.get('transaction_type') or '').lower()
         cp        = article.get('companies_people') or []
         title     = article.get('title') or ''
-        market    = article.get('market') or ''
         narrative = article.get('narrative') or ''
+        city, state = _split_market(article.get('market'))
 
-        ALLOWED_TX = {'sale', 'acquisition', 'lease', 'loan', 'refinance',
-                      'development', 'construction', 'promotion'}
         if tx not in ALLOWED_TX:
             continue
 
-        dp        = article.get('data_points') or {}
-        raw_type  = (dp.get('property_type') or '').lower()
-        units     = dp.get('size_units')
-        sfr_types = {'single family', 'single-family', 'sfr', 'single family residential'}
-        if raw_type in sfr_types and (not units or units <= 1):
+        dp       = article.get('data_points') or {}
+        raw_type = (dp.get('property_type') or '').lower()
+        units    = dp.get('size_units')
+        if raw_type in SFR_TYPES and (not units or units <= 1):
             continue
 
-        # Collect all people, classify + normalize in one Haiku call
         all_people = [
             (person.get('name', '').strip(),
              person.get('title', '').strip(),
@@ -172,9 +177,10 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                     row_num = index[key]
                     flagged = False
 
-                    old_title = str(ws.cell(row_num, C_TITLE).value  or '').strip()
-                    old_role  = str(ws.cell(row_num, C_ROLE).value   or '').strip()
-                    old_mkt   = str(ws.cell(row_num, C_MARKET).value or '').strip()
+                    old_title = str(ws.cell(row_num, C_TITLE).value or '').strip()
+                    old_role  = str(ws.cell(row_num, C_ROLE).value  or '').strip()
+                    old_city  = str(ws.cell(row_num, C_CITY).value  or '').strip()
+                    old_state = str(ws.cell(row_num, C_STATE).value or '').strip()
 
                     if person_title and person_title != old_title:
                         ws.cell(row_num, C_TITLE).value = person_title
@@ -182,8 +188,11 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                     if role and role != old_role:
                         ws.cell(row_num, C_ROLE).value = role
                         flagged = True
-                    if market and market != old_mkt:
-                        ws.cell(row_num, C_MARKET).value = market
+                    if city and city != old_city:
+                        ws.cell(row_num, C_CITY).value = city
+                        flagged = True
+                    if state and state != old_state:
+                        ws.cell(row_num, C_STATE).value = state
                         flagged = True
 
                     ws.cell(row_num, C_LAST_SEEN).value = date_str
@@ -206,7 +215,8 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                         person_title,
                         firm,
                         role,
-                        market,
+                        city,
+                        state,
                         date_str,
                         date_str,
                         1,
