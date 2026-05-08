@@ -169,7 +169,7 @@ def main() -> None:
 
     print('Writing comps...')
     counts = append_articles(date_str, articles, comps_wb)
-    print(f'  Sales: {counts["sales"]}, Leases: {counts["leases"]}, Loans: {counts["loans"]}')
+    print(f'  Sales: {counts["sales"]}, Leases: {counts["leases"]}, Loans: {counts["loans"]}, SFR: {counts["sfr"]}')
 
     print('Upserting contacts...')
     new_contacts = upsert_contacts(date_str, articles, contacts_wb)
