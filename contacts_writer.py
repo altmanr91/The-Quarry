@@ -3,7 +3,7 @@ import anthropic
 from openpyxl import Workbook
 
 CONTACTS_COLS = ['Name', 'Title', 'Company', 'Role', 'City', 'State',
-                 'Date', 'Notes', 'Review Flag']
+                 'Date', 'Notes', 'Review Flag', 'Conflict']
 
 C_NAME        = 1
 C_TITLE       = 2
@@ -14,6 +14,7 @@ C_STATE       = 6
 C_DATE        = 7
 C_NOTES       = 8
 C_REVIEW_FLAG = 9
+C_CONFLICT    = 10
 
 _ai = None
 
@@ -42,19 +43,20 @@ def _get_or_create_tab(wb, name, columns):
 
 
 def _load_index(ws):
-    """Returns (key_index, seen_names).
-    key_index: (name_lower, company_lower) -> row_number
-    seen_names: set of name_lower already in the sheet
+    """Returns (key_index, name_index).
+    key_index:  (name_lower, company_lower) -> row_number
+    name_index: name_lower -> row_number (first occurrence)
     """
     key_index  = {}
-    seen_names = set()
+    name_index = {}
     for row_num in range(2, ws.max_row + 1):
         name    = str(ws.cell(row_num, C_NAME).value    or '').strip().lower()
         company = str(ws.cell(row_num, C_COMPANY).value or '').strip().lower()
         if name:
             key_index[(name, company)] = row_num
-            seen_names.add(name)
-    return key_index, seen_names
+            if name not in name_index:
+                name_index[name] = row_num
+    return key_index, name_index
 
 
 def _classify_people(people_data, narrative):
@@ -127,7 +129,7 @@ def _note_entry(title):
 
 def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
     ws = _get_or_create_tab(wb, 'Contacts', CONTACTS_COLS)
-    index, seen_names = _load_index(ws)
+    index, name_index = _load_index(ws)
     new_count = 0
 
     ALLOWED_TX = {'sale', 'acquisition', 'lease', 'loan', 'refinance',
@@ -177,8 +179,25 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                 note         = _note_entry(title)
                 key          = (name.lower(), firm.lower())
 
-                # Skip if this person already exists under any company
-                if name.lower() in seen_names:
+                name_lower = name.lower()
+
+                if name_lower in name_index:
+                    # Same name already exists — check for company/title conflict
+                    existing_row = name_index[name_lower]
+                    existing_company = str(ws.cell(existing_row, C_COMPANY).value or '').strip()
+                    existing_title   = str(ws.cell(existing_row, C_TITLE).value   or '').strip()
+                    conflict_parts = []
+                    if firm and firm.lower() != existing_company.lower():
+                        conflict_parts.append(f'Company: {firm}')
+                    if person_title and person_title.lower() != existing_title.lower():
+                        conflict_parts.append(f'Title: {person_title}')
+                    if conflict_parts:
+                        ws.cell(existing_row, C_REVIEW_FLAG).value = 'YES'
+                        existing_conflict = str(ws.cell(existing_row, C_CONFLICT).value or '')
+                        new_conflict = ' | '.join(conflict_parts)
+                        ws.cell(existing_row, C_CONFLICT).value = (
+                            existing_conflict + ' | ' + new_conflict if existing_conflict else new_conflict
+                        )
                     continue
 
                 ws.append([
@@ -191,9 +210,10 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                     date_str,
                     note,
                     '',
+                    '',
                 ])
                 index[key] = ws.max_row
-                seen_names.add(name.lower())
+                name_index[name_lower] = ws.max_row
                 new_count += 1
 
     return new_count
