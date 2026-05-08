@@ -3,7 +3,7 @@ import anthropic
 from openpyxl import Workbook
 
 CONTACTS_COLS = ['Name', 'Title', 'Company', 'Role', 'City', 'State',
-                 'Last Seen', 'First Seen', 'Appearances', 'Notes', 'Review Flag']
+                 'Date', 'Notes', 'Review Flag']
 
 C_NAME        = 1
 C_TITLE       = 2
@@ -11,11 +11,9 @@ C_COMPANY     = 3
 C_ROLE        = 4
 C_CITY        = 5
 C_STATE       = 6
-C_LAST_SEEN   = 7
-C_FIRST_SEEN  = 8
-C_APPEARANCES = 9
-C_NOTES       = 10
-C_REVIEW_FLAG = 11
+C_DATE        = 7
+C_NOTES       = 8
+C_REVIEW_FLAG = 9
 
 _ai = None
 
@@ -44,13 +42,19 @@ def _get_or_create_tab(wb, name, columns):
 
 
 def _load_index(ws):
-    index = {}
+    """Returns (key_index, seen_names).
+    key_index: (name_lower, company_lower) -> row_number
+    seen_names: set of name_lower already in the sheet
+    """
+    key_index  = {}
+    seen_names = set()
     for row_num in range(2, ws.max_row + 1):
         name    = str(ws.cell(row_num, C_NAME).value    or '').strip().lower()
         company = str(ws.cell(row_num, C_COMPANY).value or '').strip().lower()
         if name:
-            index[(name, company)] = row_num
-    return index
+            key_index[(name, company)] = row_num
+            seen_names.add(name)
+    return key_index, seen_names
 
 
 def _classify_people(people_data, narrative):
@@ -123,7 +127,7 @@ def _note_entry(title):
 
 def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
     ws = _get_or_create_tab(wb, 'Contacts', CONTACTS_COLS)
-    index = _load_index(ws)
+    index, seen_names = _load_index(ws)
     new_count = 0
 
     ALLOWED_TX = {'sale', 'acquisition', 'lease', 'loan', 'refinance',
@@ -173,57 +177,23 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                 note         = _note_entry(title)
                 key          = (name.lower(), firm.lower())
 
-                if key in index:
-                    row_num = index[key]
-                    flagged = False
+                # Skip if this person already exists under any company
+                if name.lower() in seen_names:
+                    continue
 
-                    old_title = str(ws.cell(row_num, C_TITLE).value or '').strip()
-                    old_role  = str(ws.cell(row_num, C_ROLE).value  or '').strip()
-                    old_city  = str(ws.cell(row_num, C_CITY).value  or '').strip()
-                    old_state = str(ws.cell(row_num, C_STATE).value or '').strip()
-
-                    if person_title and person_title != old_title:
-                        ws.cell(row_num, C_TITLE).value = person_title
-                        flagged = True
-                    if role and role != old_role:
-                        ws.cell(row_num, C_ROLE).value = role
-                        flagged = True
-                    if city and city != old_city:
-                        ws.cell(row_num, C_CITY).value = city
-                        flagged = True
-                    if state and state != old_state:
-                        ws.cell(row_num, C_STATE).value = state
-                        flagged = True
-
-                    ws.cell(row_num, C_LAST_SEEN).value = date_str
-                    appearances = int(ws.cell(row_num, C_APPEARANCES).value or 0) + 1
-                    ws.cell(row_num, C_APPEARANCES).value = appearances
-                    existing_notes = str(ws.cell(row_num, C_NOTES).value or '')
-                    ws.cell(row_num, C_NOTES).value = (
-                        existing_notes + ' | ' + note if existing_notes else note
-                    )
-                    if flagged:
-                        ws.cell(row_num, C_REVIEW_FLAG).value = 'YES'
-
-                else:
-                    name_lower = name.lower()
-                    same_name_exists = any(k[0] == name_lower for k in index)
-                    review_flag = 'YES' if same_name_exists else ''
-
-                    ws.append([
-                        name,
-                        person_title,
-                        firm,
-                        role,
-                        city,
-                        state,
-                        date_str,
-                        date_str,
-                        1,
-                        note,
-                        review_flag,
-                    ])
-                    index[key] = ws.max_row
-                    new_count += 1
+                ws.append([
+                    name,
+                    person_title,
+                    firm,
+                    role,
+                    city,
+                    state,
+                    date_str,
+                    note,
+                    '',
+                ])
+                index[key] = ws.max_row
+                seen_names.add(name.lower())
+                new_count += 1
 
     return new_count
