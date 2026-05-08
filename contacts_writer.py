@@ -68,7 +68,8 @@ def _cre_names(people_data, narrative):
                     'brokers, investors, developers, lenders, operators, asset managers, '
                     'executives at real estate firms, etc.? '
                     'Exclude politicians, government officials, athletes, celebrities, '
-                    'and anyone not working in the CRE industry. '
+                    'residential real estate agents and brokers (Redfin, Compass, residential RE agents, etc.), '
+                    'and anyone not working in the commercial real estate industry. '
                     'Return only the exact names of CRE professionals, one per line, no other text.'
                 ),
             }],
