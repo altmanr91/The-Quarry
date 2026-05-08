@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-import time
 from datetime import date
 from pathlib import Path
 
@@ -48,6 +47,39 @@ def _get_access_token(client_id: str, client_secret: str, refresh_token: str) ->
     return resp.json()['access_token']
 
 
+def _od_headers(token: str) -> dict:
+    return {'Authorization': f'Bearer {token}'}
+
+
+def _od_download(token: str, filename: str, dest: Path) -> bool:
+    url  = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{filename}:/content'
+    resp = requests.get(url, headers=_od_headers(token))
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    dest.write_bytes(resp.content)
+    return True
+
+
+def _od_upload(token: str, filename: str, path: Path) -> requests.Response:
+    url  = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{filename}:/content'
+    data = path.read_bytes()
+    return requests.put(url, headers={**_od_headers(token), 'Content-Type': 'application/octet-stream'}, data=data)
+
+
+def _od_list_folder(token: str) -> list:
+    url  = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}:/children'
+    resp = requests.get(url, headers=_od_headers(token))
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    return resp.json().get('value', [])
+
+
+def _od_delete(token: str, item_id: str) -> None:
+    requests.delete(f'{GRAPH_URL}/me/drive/items/{item_id}', headers=_od_headers(token))
+
+
 def _download_from_onedrive(comps_path: Path, contacts_path: Path) -> None:
     client_id     = os.getenv('ONEDRIVE_CLIENT_ID')
     client_secret = os.getenv('ONEDRIVE_CLIENT_SECRET')
@@ -58,25 +90,40 @@ def _download_from_onedrive(comps_path: Path, contacts_path: Path) -> None:
         return
 
     try:
-        access_token = _get_access_token(client_id, client_secret, refresh_token)
+        token = _get_access_token(client_id, client_secret, refresh_token)
     except Exception as e:
         print(f'  [onedrive] Could not get access token — skipping download: {e}')
         return
 
-    headers = {'Authorization': f'Bearer {access_token}'}
-
-    for path in (comps_path, contacts_path):
-        url = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{path.name}:/content'
-        resp = requests.get(url, headers=headers)
-        if resp.status_code == 404:
-            print(f'  [onedrive] {path.name} not found — will create fresh')
-            continue
+    # Absorb any pending comps file saved when comps.xlsx was locked on a prior run
+    comps_downloaded = False
+    items = _od_list_folder(token)
+    pending = sorted(
+        [f for f in items if f['name'].startswith('comps_pending_') and f['name'].endswith('.xlsx')],
+        key=lambda f: f['name'],
+    )
+    if pending:
+        latest = pending[-1]
+        print(f'  [onedrive] Absorbing {latest["name"]} as comps base')
+        resp = requests.get(f'{GRAPH_URL}/me/drive/items/{latest["id"]}/content', headers=_od_headers(token))
         resp.raise_for_status()
-        path.write_bytes(resp.content)
-        print(f'  [onedrive] Downloaded {path.name}')
+        comps_path.write_bytes(resp.content)
+        comps_downloaded = True
+        for p in pending:
+            _od_delete(token, p['id'])
+            print(f'  [onedrive] Deleted {p["name"]}')
+
+    for path, skip in ((comps_path, comps_downloaded), (contacts_path, False)):
+        if skip:
+            continue
+        found = _od_download(token, path.name, path)
+        if found:
+            print(f'  [onedrive] Downloaded {path.name}')
+        else:
+            print(f'  [onedrive] {path.name} not found — will create fresh')
 
 
-def _upload_to_onedrive(comps_path: Path, contacts_path: Path) -> None:
+def _upload_to_onedrive(comps_path: Path, contacts_path: Path, date_str: str) -> None:
     client_id     = os.getenv('ONEDRIVE_CLIENT_ID')
     client_secret = os.getenv('ONEDRIVE_CLIENT_SECRET')
     refresh_token = os.getenv('ONEDRIVE_REFRESH_TOKEN')
@@ -85,27 +132,17 @@ def _upload_to_onedrive(comps_path: Path, contacts_path: Path) -> None:
         print('  [onedrive] Credentials not set — skipping upload')
         return
 
-    access_token = _get_access_token(client_id, client_secret, refresh_token)
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type':  'application/octet-stream',
-    }
+    token = _get_access_token(client_id, client_secret, refresh_token)
 
     for path in (comps_path, contacts_path):
-        with open(path, 'rb') as f:
-            data = f.read()
-        upload_url = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{path.name}:/content'
-        for attempt in range(1, 5):
-            resp = requests.put(upload_url, headers=headers, data=data)
-            if resp.status_code == 423:
-                wait = attempt * 30
-                print(f'  [onedrive] {path.name} locked — retrying in {wait}s (attempt {attempt}/4)')
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            break
-        else:
-            resp.raise_for_status()
+        resp = _od_upload(token, path.name, path)
+        if resp.status_code == 423 and path == comps_path:
+            pending_name = f'comps_pending_{date_str}.xlsx'
+            r2 = _od_upload(token, pending_name, path)
+            r2.raise_for_status()
+            print(f'  [onedrive] comps.xlsx locked — saved as {pending_name}, will merge on next run')
+            continue
+        resp.raise_for_status()
         print(f'  [onedrive] Uploaded {path.name}')
 
 
@@ -141,7 +178,7 @@ def main() -> None:
     contacts_wb.save(CONTACTS_FILE)
 
     print('Uploading to OneDrive...')
-    _upload_to_onedrive(COMPS_FILE, CONTACTS_FILE)
+    _upload_to_onedrive(COMPS_FILE, CONTACTS_FILE, date_str)
 
     print('Done.')
 
