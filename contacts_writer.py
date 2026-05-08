@@ -149,7 +149,7 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                 if not name:
                     continue
                 info = classifications.get(name.lower())
-                if not info or not info['cre']:
+                if not info or not info['cre'] or not info['company']:
                     continue
 
                 person_title = info['title']
