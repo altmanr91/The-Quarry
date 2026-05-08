@@ -131,6 +131,13 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
         if not tx and not any(e.get('people') for e in cp):
             continue
 
+        dp       = article.get('data_points') or {}
+        raw_type = (dp.get('property_type') or '').lower()
+        units    = dp.get('size_units')
+        sfr_types = {'single family', 'single-family', 'sfr', 'single family residential'}
+        if raw_type in sfr_types and (not units or units <= 1):
+            continue
+
         # Collect all people, classify + normalize in one Haiku call
         all_people = [
             (person.get('name', '').strip(),
