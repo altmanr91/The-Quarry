@@ -86,16 +86,18 @@ def _purge_no_basis(wb: Workbook) -> int:
     """Remove existing rows that lack a financial basis. Returns count removed."""
     removed = 0
     checks = [
-        ('Sales',  8),   # Sale Price
-        ('Leases', 6),   # Size (SF)
-        ('Loans',  8),   # Loan Amount
+        ('Sales',  8, 5),   # Sale Price, Property Type
+        ('Leases', 6, None),
+        ('Loans',  8, None),
     ]
-    for sheet_name, basis_col in checks:
+    for sheet_name, basis_col, type_col in checks:
         if sheet_name not in wb.sheetnames:
             continue
         ws = wb[sheet_name]
         for row in range(ws.max_row, 1, -1):  # bottom-up to preserve indices
-            if not ws.cell(row, basis_col).value:
+            no_basis = not ws.cell(row, basis_col).value
+            no_type  = type_col and not ws.cell(row, type_col).value
+            if no_basis or no_type:
                 ws.delete_rows(row)
                 removed += 1
     return removed
@@ -127,7 +129,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
         addr = dp.get('address') or ''
 
         if tx in SALE_TYPES:
-            if not dp.get('sale_price'):
+            if not dp.get('sale_price') or not dp.get('property_type'):
                 continue
             sales_ws.append([
                 date_str,
