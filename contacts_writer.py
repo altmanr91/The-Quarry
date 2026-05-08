@@ -109,11 +109,11 @@ def _classify_people(people_data, narrative):
         }
 
 
-def _note_entry(date_str, title):
+def _note_entry(title):
     snippet = title[:80].rstrip()
     if len(title) > 80:
         snippet += '...'
-    return f'{date_str}: {snippet}'
+    return snippet
 
 
 def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
@@ -165,7 +165,7 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
 
                 person_title = info['title']
                 firm         = info['company']
-                note         = _note_entry(date_str, title)
+                note         = _note_entry(title)
                 key          = (name.lower(), firm.lower())
 
                 if key in index:
