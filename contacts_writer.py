@@ -43,43 +43,68 @@ def _load_index(ws):
     return index
 
 
-def _cre_names(people_data, narrative):
+def _classify_people(people_data, narrative):
     """
-    people_data: list of (name, title, role, firm)
-    Returns set of lowercased names that are CRE industry professionals.
-    Falls back to all names if the API call fails.
+    people_data: list of (name, title, firm)
+    Returns dict: name_lower -> {'cre': bool, 'title': str, 'company': str}
+    Falls back to including everyone with original data if the API call fails.
     """
     if not people_data:
-        return set()
+        return {}
+
     lines = '\n'.join(
-        f'- {name} | Title: {title or "unknown"} | Role: {role or "unknown"} | Firm: {firm or "unknown"}'
-        for name, title, role, firm in people_data
+        f'- Name: {name} | Raw title: {title or "unknown"} | Firm: {firm or "unknown"}'
+        for name, title, firm in people_data
     )
+
     try:
         msg = _client().messages.create(
             model='claude-haiku-4-5-20251001',
-            max_tokens=512,
+            max_tokens=1024,
             messages=[{
                 'role': 'user',
                 'content': (
                     f'Article context:\n{narrative}\n\n'
                     f'People mentioned:\n{lines}\n\n'
-                    'Which of these are CRE (commercial real estate) industry professionals — '
-                    'brokers, investors, developers, lenders, operators, asset managers, '
-                    'executives at real estate firms, etc.? '
-                    'Exclude politicians, government officials, athletes, celebrities, '
-                    'residential real estate agents and brokers (Redfin, Compass, residential RE agents, etc.), '
-                    'project managers, engineers, architects, construction workers, '
-                    'and anyone not working in the commercial real estate industry. '
-                    'Return only the exact names of CRE professionals, one per line, no other text.'
+                    'For each person do three things:\n'
+                    '1. Is this a CRE (commercial real estate) professional? Include brokers, '
+                    'investors, developers, lenders, operators, asset managers, and executives '
+                    'at real estate firms. Exclude politicians, government officials, residential '
+                    'brokers/agents, project managers, engineers, architects, and anyone outside CRE.\n'
+                    '2. Normalize their title to just the job function — strip any company/division '
+                    'references (e.g. "CEO of JLL\'s Hotels and Hospitality, Americas" → "CEO").\n'
+                    '3. Normalize their company — if the raw title contains a division or subsidiary, '
+                    'use that as the company instead of the firm field '
+                    '(e.g. "CEO of JLL\'s Hotels and Hospitality, Americas" → "JLL Hotels and Hospitality, Americas"). '
+                    'Otherwise leave blank and the original firm will be used.\n\n'
+                    'One line per person, pipe-delimited, exact format:\n'
+                    'EXACT_NAME|YES_OR_NO|NORMALIZED_TITLE|NORMALIZED_COMPANY'
                 ),
             }],
         )
-        result = [l.strip().lstrip('- ') for l in msg.content[0].text.strip().splitlines() if l.strip()]
-        lookup = {n.lower() for n, _, _, _ in people_data}
-        return {r.lower() for r in result if r.lower() in lookup}
+        lookup = {n.lower(): (n, t, f) for n, t, f in people_data}
+        result = {}
+        for line in msg.content[0].text.strip().splitlines():
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts) < 2:
+                continue
+            name_raw     = parts[0].lstrip('- ')
+            is_cre       = parts[1].upper() == 'YES'
+            norm_title   = parts[2] if len(parts) > 2 else ''
+            norm_company = parts[3] if len(parts) > 3 else ''
+            if name_raw.lower() in lookup:
+                _, orig_title, orig_firm = lookup[name_raw.lower()]
+                result[name_raw.lower()] = {
+                    'cre':     is_cre,
+                    'title':   norm_title or orig_title,
+                    'company': norm_company or orig_firm,
+                }
+        return result
     except Exception:
-        return {n.lower() for n, _, _, _ in people_data}
+        return {
+            n.lower(): {'cre': True, 'title': t, 'company': f}
+            for n, t, f in people_data
+        }
 
 
 def _note_entry(date_str, role, title, market):
@@ -104,30 +129,33 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
         if not tx and not any(e.get('people') for e in cp):
             continue
 
-        # Collect all people in this article, filter to CRE professionals
+        # Collect all people, classify + normalize in one Haiku call
         all_people = [
             (person.get('name', '').strip(),
              person.get('title', '').strip(),
-             entry.get('label', '').upper(),
              entry.get('firm_name', '').strip())
             for entry in cp
             for person in (entry.get('people') or [])
             if person.get('name', '').strip()
         ]
-        cre_names = _cre_names(all_people, narrative)
+        classifications = _classify_people(all_people, narrative)
 
         for entry in cp:
             role   = (entry.get('label') or '').upper()
-            firm   = (entry.get('firm_name') or '').strip()
             people = entry.get('people') or []
 
             for person in people:
                 name = (person.get('name') or '').strip()
-                if not name or name.lower() not in cre_names:
+                if not name:
                     continue
-                person_title = (person.get('title') or '').strip()
-                note = _note_entry(date_str, role, title, market)
-                key  = (name.lower(), firm.lower())
+                info = classifications.get(name.lower())
+                if not info or not info['cre']:
+                    continue
+
+                person_title = info['title']
+                firm         = info['company']
+                note         = _note_entry(date_str, role, title, market)
+                key          = (name.lower(), firm.lower())
 
                 if key in index:
                     row_num = index[key]
