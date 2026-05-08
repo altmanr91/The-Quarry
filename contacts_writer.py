@@ -128,12 +128,14 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
         market    = article.get('market') or ''
         narrative = article.get('narrative') or ''
 
-        if not tx and not any(e.get('people') for e in cp):
+        ALLOWED_TX = {'sale', 'acquisition', 'lease', 'loan', 'refinance',
+                      'development', 'construction', 'promotion'}
+        if tx not in ALLOWED_TX:
             continue
 
-        dp       = article.get('data_points') or {}
-        raw_type = (dp.get('property_type') or '').lower()
-        units    = dp.get('size_units')
+        dp        = article.get('data_points') or {}
+        raw_type  = (dp.get('property_type') or '').lower()
+        units     = dp.get('size_units')
         sfr_types = {'single family', 'single-family', 'sfr', 'single family residential'}
         if raw_type in sfr_types and (not units or units <= 1):
             continue
