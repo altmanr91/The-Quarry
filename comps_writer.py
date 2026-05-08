@@ -127,7 +127,8 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
         dp   = article.get('data_points') or {}
         cp   = article.get('companies_people') or []
         addr = dp.get('address') or ''
-        name = dp.get('property_name') or (addr.split(',')[0].strip() if addr else None)
+        name  = dp.get('property_name') or (addr.split(',')[0].strip() if addr else None)
+        ptype = dp.get('property_type', '').title() if dp.get('property_type') else None
 
         if tx in SALE_TYPES:
             if not dp.get('sale_price') or not dp.get('property_type'):
@@ -137,7 +138,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 name,
                 addr,
                 article.get('market'),
-                dp.get('property_type'),
+                ptype,
                 dp.get('size_sf'),
                 dp.get('size_units'),
                 dp.get('sale_price'),
@@ -172,7 +173,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 name,
                 addr,
                 article.get('market'),
-                dp.get('property_type'),
+                ptype,
                 dp.get('size_sf'),
                 dp.get('rental_rate'),
                 tenants,
@@ -197,7 +198,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 name,
                 addr,
                 article.get('market'),
-                dp.get('property_type'),
+                ptype,
                 dp.get('size_sf'),
                 dp.get('size_units'),
                 dp.get('loan_amount'),
