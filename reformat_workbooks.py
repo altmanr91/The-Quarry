@@ -22,7 +22,7 @@ FMT_PCT     = '0.0"%"'
 
 # col index -> format for each tab (data rows only, skipping header row 1)
 SALES_FORMATS  = {6: FMT_COMMA, 8: FMT_DOLLARS, 9: FMT_DOLLARS, 10: FMT_DOLLARS, 12: FMT_PCT}
-LEASES_FORMATS = {6: FMT_COMMA}
+LEASES_FORMATS = {6: FMT_COMMA, 7: FMT_DOLLARS}
 LOANS_FORMATS  = {6: FMT_COMMA, 8: FMT_DOLLARS, 9: FMT_DOLLARS, 10: FMT_DOLLARS}
 
 
@@ -34,6 +34,8 @@ def _get_access_token():
         'client_secret': os.getenv('ONEDRIVE_CLIENT_SECRET'),
         'scope':         'offline_access Files.ReadWrite',
     })
+    if not resp.ok:
+        print("Token error:", resp.json())
     resp.raise_for_status()
     return resp.json()['access_token']
 

@@ -18,7 +18,7 @@ SALES_COLS  = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
                'Source', 'Link', 'Notes']
 
 LEASES_COLS = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
-               'Size (SF)', 'Tenants', 'Landlord', 'Tenant Rep', 'Landlord Broker',
+               'Size (SF)', 'Rent ($/SF/yr)', 'Tenants', 'Landlord', 'Tenant Rep', 'Landlord Broker',
                'Source', 'Link']
 
 LOANS_COLS  = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
@@ -152,6 +152,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 article.get('market'),
                 dp.get('property_type'),
                 dp.get('size_sf'),
+                dp.get('rental_rate'),
                 tenants,
                 _firms(cp, 'LANDLORD', 'OWNER'),
                 _firms(cp, 'TENANT REP'),
@@ -162,6 +163,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             _check_duplicate(leases_ws, leases_addrs, addr, 3)
             _fmt(leases_ws, leases_ws.max_row, [
                 (6, FMT_COMMA),    # Size (SF)
+                (7, FMT_DOLLARS),  # Rent ($/SF/yr)
             ])
             counts['leases'] += 1
 
