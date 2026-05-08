@@ -108,6 +108,9 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
         addr = dp.get('address') or ''
 
         if tx in SALE_TYPES:
+            if not dp.get('sale_price'):
+                print(f'  [comps] Skipping sale (no sale price): {dp.get("property_name") or addr or article.get("title")}')
+                continue
             sales_ws.append([
                 date_str,
                 dp.get('property_name'),
@@ -140,6 +143,9 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             counts['sales'] += 1
 
         elif tx in LEASE_TYPES:
+            if not dp.get('size_sf'):
+                print(f'  [comps] Skipping lease (no size SF): {dp.get("property_name") or addr or article.get("title")}')
+                continue
             tenants = ', '.join(article.get('tenants') or [])
             leases_ws.append([
                 date_str,
@@ -162,6 +168,9 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             counts['leases'] += 1
 
         elif tx in LOAN_TYPES:
+            if not dp.get('loan_amount'):
+                print(f'  [comps] Skipping loan (no loan amount): {dp.get("property_name") or addr or article.get("title")}')
+                continue
             loans_ws.append([
                 date_str,
                 dp.get('property_name'),
