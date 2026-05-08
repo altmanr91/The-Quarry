@@ -1,3 +1,5 @@
+import os
+import anthropic
 from openpyxl import Workbook
 
 CONTACTS_COLS = ['Name', 'Title', 'Company', 'Role', 'Market',
@@ -14,6 +16,14 @@ C_APPEARANCES = 8
 C_NOTES       = 9
 C_REVIEW_FLAG = 10
 
+_ai = None
+
+def _client():
+    global _ai
+    if _ai is None:
+        _ai = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+    return _ai
+
 
 def _get_or_create_tab(wb, name, columns):
     if name in wb.sheetnames:
@@ -24,7 +34,6 @@ def _get_or_create_tab(wb, name, columns):
 
 
 def _load_index(ws):
-    """Return dict mapping (name_lower, company_lower) -> row_number."""
     index = {}
     for row_num in range(2, ws.max_row + 1):
         name    = str(ws.cell(row_num, C_NAME).value    or '').strip().lower()
@@ -32,6 +41,43 @@ def _load_index(ws):
         if name:
             index[(name, company)] = row_num
     return index
+
+
+def _cre_names(people_data, narrative):
+    """
+    people_data: list of (name, title, role, firm)
+    Returns set of lowercased names that are CRE industry professionals.
+    Falls back to all names if the API call fails.
+    """
+    if not people_data:
+        return set()
+    lines = '\n'.join(
+        f'- {name} | Title: {title or "unknown"} | Role: {role or "unknown"} | Firm: {firm or "unknown"}'
+        for name, title, role, firm in people_data
+    )
+    try:
+        msg = _client().messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=512,
+            messages=[{
+                'role': 'user',
+                'content': (
+                    f'Article context:\n{narrative}\n\n'
+                    f'People mentioned:\n{lines}\n\n'
+                    'Which of these are CRE (commercial real estate) industry professionals — '
+                    'brokers, investors, developers, lenders, operators, asset managers, '
+                    'executives at real estate firms, etc.? '
+                    'Exclude politicians, government officials, athletes, celebrities, '
+                    'and anyone not working in the CRE industry. '
+                    'Return only the exact names of CRE professionals, one per line, no other text.'
+                ),
+            }],
+        )
+        result = [l.strip().lstrip('- ') for l in msg.content[0].text.strip().splitlines() if l.strip()]
+        lookup = {n.lower() for n, _, _, _ in people_data}
+        return {r.lower() for r in result if r.lower() in lookup}
+    except Exception:
+        return {n.lower() for n, _, _, _ in people_data}
 
 
 def _note_entry(date_str, role, title, market):
@@ -42,23 +88,31 @@ def _note_entry(date_str, role, title, market):
 
 
 def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
-    """
-    Upsert contacts from articles into the Contacts tab.
-    Returns count of new contacts added.
-    """
     ws = _get_or_create_tab(wb, 'Contacts', CONTACTS_COLS)
     index = _load_index(ws)
     new_count = 0
 
     for article in articles:
-        tx = (article.get('transaction_type') or '').lower()
-        cp = article.get('companies_people') or []
-        title  = article.get('title') or ''
-        market = article.get('market') or ''
+        tx        = (article.get('transaction_type') or '').lower()
+        cp        = article.get('companies_people') or []
+        title     = article.get('title') or ''
+        market    = article.get('market') or ''
+        narrative = article.get('narrative') or ''
 
-        # Skip non-transaction articles that have no people data
         if not tx and not any(e.get('people') for e in cp):
             continue
+
+        # Collect all people in this article, filter to CRE professionals
+        all_people = [
+            (person.get('name', '').strip(),
+             person.get('title', '').strip(),
+             entry.get('label', '').upper(),
+             entry.get('firm_name', '').strip())
+            for entry in cp
+            for person in (entry.get('people') or [])
+            if person.get('name', '').strip()
+        ]
+        cre_names = _cre_names(all_people, narrative)
 
         for entry in cp:
             role   = (entry.get('label') or '').upper()
@@ -67,7 +121,7 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
 
             for person in people:
                 name = (person.get('name') or '').strip()
-                if not name:
+                if not name or name.lower() not in cre_names:
                     continue
                 person_title = (person.get('title') or '').strip()
                 note = _note_entry(date_str, role, title, market)
@@ -102,7 +156,6 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                         ws.cell(row_num, C_REVIEW_FLAG).value = 'YES'
 
                 else:
-                    # Name match at a different firm → possible firm change
                     name_lower = name.lower()
                     same_name_exists = any(k[0] == name_lower for k in index)
                     review_flag = 'YES' if same_name_exists else ''
@@ -113,9 +166,9 @@ def upsert_contacts(date_str: str, articles: list, wb: Workbook) -> int:
                         firm,
                         role,
                         market,
-                        date_str,    # Last Seen
-                        date_str,    # First Seen
-                        1,           # Appearances
+                        date_str,
+                        date_str,
+                        1,
                         note,
                         review_flag,
                     ])
