@@ -82,6 +82,25 @@ def _check_duplicate(ws, addr_map, address, addr_col_idx):
         addr_map[addr_lower] = [new_row]
 
 
+def _purge_no_basis(wb: Workbook) -> int:
+    """Remove existing rows that lack a financial basis. Returns count removed."""
+    removed = 0
+    checks = [
+        ('Sales',  8),   # Sale Price
+        ('Leases', 6),   # Size (SF)
+        ('Loans',  8),   # Loan Amount
+    ]
+    for sheet_name, basis_col in checks:
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        for row in range(ws.max_row, 1, -1):  # bottom-up to preserve indices
+            if not ws.cell(row, basis_col).value:
+                ws.delete_rows(row)
+                removed += 1
+    return removed
+
+
 def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
     """
     Append new comp rows from articles_handoff.json to the comps workbook.

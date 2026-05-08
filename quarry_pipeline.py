@@ -8,7 +8,7 @@ import requests
 from dotenv import load_dotenv
 from openpyxl import Workbook, load_workbook
 
-from comps_writer import append_articles
+from comps_writer import append_articles, _purge_no_basis
 from contacts_writer import upsert_contacts
 
 load_dotenv()
@@ -164,6 +164,8 @@ def main() -> None:
     print('Loading workbooks...')
     comps_wb    = _load_or_create(COMPS_FILE)
     contacts_wb = _load_or_create(CONTACTS_FILE)
+
+    _purge_no_basis(comps_wb)
 
     print('Writing comps...')
     counts = append_articles(date_str, articles, comps_wb)
