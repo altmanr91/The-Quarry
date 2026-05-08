@@ -30,6 +30,7 @@ jobs:
           ONEDRIVE_CLIENT_ID:     ${{ secrets.ONEDRIVE_CLIENT_ID }}
           ONEDRIVE_CLIENT_SECRET: ${{ secrets.ONEDRIVE_CLIENT_SECRET }}
           ONEDRIVE_REFRESH_TOKEN: ${{ secrets.ONEDRIVE_REFRESH_TOKEN }}
+          ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
         run: python quarry_pipeline.py
 
       - name: Upload workbooks as artifact (backup)

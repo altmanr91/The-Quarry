@@ -1,3 +1,5 @@
+import os
+import anthropic
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
@@ -6,6 +8,14 @@ YELLOW = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid'
 FMT_DOLLARS = '$#,##0'
 FMT_COMMA   = '#,##0'
 FMT_PCT     = '0.0"%"'
+
+_ai = None
+
+def _client():
+    global _ai
+    if _ai is None:
+        _ai = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+    return _ai
 
 
 def _fmt(ws, row, col_fmt_pairs):
@@ -44,12 +54,46 @@ def _get_or_create_tab(wb, name, columns):
     return ws
 
 
-def _firms(companies_people, *labels):
+def _firms_list(companies_people, *labels):
     labels_up = {l.upper() for l in labels}
-    return ', '.join(
+    return [
         e['firm_name'] for e in companies_people
         if e.get('label', '').upper() in labels_up and e.get('firm_name')
-    )
+    ]
+
+
+def _filter_firms(firms, role, narrative):
+    """Use Claude Haiku to filter to directly-involved firms when >4 are listed."""
+    if len(firms) <= 4:
+        return firms
+    try:
+        firm_list = '\n'.join(f'- {f}' for f in firms)
+        msg = _client().messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=256,
+            messages=[{
+                'role': 'user',
+                'content': (
+                    f'Real estate transaction article:\n\n{narrative}\n\n'
+                    f'Firms listed as {role}:\n{firm_list}\n\n'
+                    f'Which of these firms were directly involved in this transaction as {role}? '
+                    f'Return only their exact names, one per line, no other text.'
+                ),
+            }],
+        )
+        lines = [l.strip().lstrip('- ') for l in msg.content[0].text.strip().splitlines() if l.strip()]
+        lookup = {f.lower(): f for f in firms}
+        filtered = [lookup[l.lower()] for l in lines if l.lower() in lookup]
+        return filtered if filtered else firms[:4]
+    except Exception:
+        return firms[:4]
+
+
+def _firms(companies_people, *labels, narrative=''):
+    lst = _firms_list(companies_people, *labels)
+    role = labels[0].lower() if labels else 'participant'
+    lst = _filter_firms(lst, role, narrative)
+    return ', '.join(lst)
 
 
 def _calc(numerator, denominator):
@@ -59,7 +103,6 @@ def _calc(numerator, denominator):
 
 
 def _split_market(market):
-    """Split 'Dallas, TX' into ('Dallas', 'TX'). Returns (city, state)."""
     if not market:
         return None, None
     parts = market.rsplit(',', 1)
@@ -83,7 +126,7 @@ def _highlight_row(ws, row_num):
 
 
 def _check_duplicate(ws, addr_map, address, addr_col_idx):
-    new_row   = ws.max_row
+    new_row    = ws.max_row
     addr_lower = (address or '').strip().lower()
     if not addr_lower:
         return
@@ -97,13 +140,12 @@ def _check_duplicate(ws, addr_map, address, addr_col_idx):
 
 
 def _purge_no_basis(wb: Workbook) -> int:
-    """Remove existing rows that lack a financial basis. Returns count removed."""
     removed = 0
     checks = [
-        ('Sales',  9, 6),   # Sale Price col 9, Property Type col 6
-        ('Leases', 7, None),  # Size (SF) col 7
-        ('Loans',  9, None),  # Loan Amount col 9
-        ('SFR',    7, None),  # Sale Price col 7
+        ('Sales',  9, 6),
+        ('Leases', 7, None),
+        ('Loans',  9, None),
+        ('SFR',    7, None),
     ]
     for sheet_name, basis_col, type_col in checks:
         if sheet_name not in wb.sheetnames:
@@ -136,11 +178,12 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
         if tx not in SALE_TYPES | LEASE_TYPES | LOAN_TYPES:
             continue
 
-        dp    = article.get('data_points') or {}
-        cp    = article.get('companies_people') or []
-        addr  = dp.get('address') or ''
-        name  = dp.get('property_name') or (addr.split(',')[0].strip() if addr else None)
-        ptype = dp.get('property_type', '').title() if dp.get('property_type') else None
+        dp        = article.get('data_points') or {}
+        cp        = article.get('companies_people') or []
+        narrative = article.get('narrative') or ''
+        addr      = dp.get('address') or ''
+        name      = dp.get('property_name') or (addr.split(',')[0].strip() if addr else None)
+        ptype     = dp.get('property_type', '').title() if dp.get('property_type') else None
         city, state = _split_market(article.get('market'))
         raw_ptype   = (dp.get('property_type') or '').lower()
         units       = dp.get('size_units')
@@ -159,19 +202,19 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 dp.get('sale_price'),
                 _calc(dp.get('sale_price'), dp.get('size_sf')),
                 dp.get('year_built'),
-                _firms(cp, 'BUYER'),
-                _firms(cp, 'SELLER'),
-                _firms(cp, 'SELLER BROKER', 'BUYER BROKER'),
-                _firms(cp, 'LENDER'),
+                _firms(cp, 'BUYER',                        narrative=narrative),
+                _firms(cp, 'SELLER',                       narrative=narrative),
+                _firms(cp, 'SELLER BROKER', 'BUYER BROKER', narrative=narrative),
+                _firms(cp, 'LENDER',                       narrative=narrative),
                 article.get('source'),
                 article.get('link'),
                 article.get('financing'),
             ])
             _check_duplicate(sfr_ws, sfr_addrs, addr, 2)
             _fmt(sfr_ws, sfr_ws.max_row, [
-                (6, FMT_COMMA),    # Size (SF)
-                (7, FMT_DOLLARS),  # Sale Price
-                (8, FMT_DOLLARS),  # $/SF
+                (6, FMT_COMMA),
+                (7, FMT_DOLLARS),
+                (8, FMT_DOLLARS),
             ])
             counts['sfr'] += 1
 
@@ -192,21 +235,21 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 _calc(dp.get('sale_price'), dp.get('size_units')),
                 dp.get('year_built'),
                 dp.get('occupancy'),
-                _firms(cp, 'BUYER'),
-                _firms(cp, 'SELLER'),
-                _firms(cp, 'SELLER BROKER', 'BUYER BROKER'),
-                _firms(cp, 'LENDER'),
+                _firms(cp, 'BUYER',                        narrative=narrative),
+                _firms(cp, 'SELLER',                       narrative=narrative),
+                _firms(cp, 'SELLER BROKER', 'BUYER BROKER', narrative=narrative),
+                _firms(cp, 'LENDER',                       narrative=narrative),
                 article.get('source'),
                 article.get('link'),
                 article.get('financing'),
             ])
             _check_duplicate(sales_ws, sales_addrs, addr, 3)
             _fmt(sales_ws, sales_ws.max_row, [
-                (7, FMT_COMMA),    # Size (SF)
-                (9, FMT_DOLLARS),  # Sale Price
-                (10, FMT_DOLLARS), # $/SF
-                (11, FMT_DOLLARS), # $/Unit
-                (13, FMT_PCT),     # Occupancy %
+                (7, FMT_COMMA),
+                (9, FMT_DOLLARS),
+                (10, FMT_DOLLARS),
+                (11, FMT_DOLLARS),
+                (13, FMT_PCT),
             ])
             counts['sales'] += 1
 
@@ -224,16 +267,16 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 dp.get('size_sf'),
                 dp.get('rental_rate'),
                 tenants,
-                _firms(cp, 'LANDLORD', 'OWNER'),
-                _firms(cp, 'TENANT REP'),
-                _firms(cp, 'LEASING AGENT'),
+                _firms(cp, 'LANDLORD', 'OWNER', narrative=narrative),
+                _firms(cp, 'TENANT REP',         narrative=narrative),
+                _firms(cp, 'LEASING AGENT',       narrative=narrative),
                 article.get('source'),
                 article.get('link'),
             ])
             _check_duplicate(leases_ws, leases_addrs, addr, 3)
             _fmt(leases_ws, leases_ws.max_row, [
-                (7, FMT_COMMA),    # Size (SF)
-                (8, FMT_DOLLARS),  # Rent ($/SF/yr)
+                (7, FMT_COMMA),
+                (8, FMT_DOLLARS),
             ])
             counts['leases'] += 1
 
@@ -252,18 +295,18 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 dp.get('loan_amount'),
                 _calc(dp.get('loan_amount'), dp.get('size_sf')),
                 _calc(dp.get('loan_amount'), dp.get('size_units')),
-                _firms(cp, 'SPONSOR', 'DEVELOPER/SPONSOR'),
-                _firms(cp, 'LENDER'),
+                _firms(cp, 'SPONSOR', 'DEVELOPER/SPONSOR', narrative=narrative),
+                _firms(cp, 'LENDER',                       narrative=narrative),
                 article.get('source'),
                 article.get('link'),
                 article.get('financing'),
             ])
             _check_duplicate(loans_ws, loans_addrs, addr, 3)
             _fmt(loans_ws, loans_ws.max_row, [
-                (7, FMT_COMMA),    # Size (SF)
-                (9, FMT_DOLLARS),  # Loan Amount
-                (10, FMT_DOLLARS), # Loan/SF
-                (11, FMT_DOLLARS), # Loan/Unit
+                (7, FMT_COMMA),
+                (9, FMT_DOLLARS),
+                (10, FMT_DOLLARS),
+                (11, FMT_DOLLARS),
             ])
             counts['loans'] += 1
 
