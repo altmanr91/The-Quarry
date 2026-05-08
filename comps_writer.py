@@ -124,16 +124,17 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
         if tx not in SALE_TYPES | LEASE_TYPES | LOAN_TYPES:
             continue
 
-        dp  = article.get('data_points') or {}
-        cp  = article.get('companies_people') or []
+        dp   = article.get('data_points') or {}
+        cp   = article.get('companies_people') or []
         addr = dp.get('address') or ''
+        name = dp.get('property_name') or addr or None
 
         if tx in SALE_TYPES:
             if not dp.get('sale_price') or not dp.get('property_type'):
                 continue
             sales_ws.append([
                 date_str,
-                dp.get('property_name'),
+                name,
                 addr,
                 article.get('market'),
                 dp.get('property_type'),
@@ -168,7 +169,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             tenants = ', '.join(article.get('tenants') or [])
             leases_ws.append([
                 date_str,
-                dp.get('property_name'),
+                name,
                 addr,
                 article.get('market'),
                 dp.get('property_type'),
@@ -193,7 +194,7 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 continue
             loans_ws.append([
                 date_str,
-                dp.get('property_name'),
+                name,
                 addr,
                 article.get('market'),
                 dp.get('property_type'),
