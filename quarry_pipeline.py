@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -94,8 +95,17 @@ def _upload_to_onedrive(comps_path: Path, contacts_path: Path) -> None:
         with open(path, 'rb') as f:
             data = f.read()
         upload_url = f'{GRAPH_URL}/me/drive/root:/{ONEDRIVE_DIR}/{path.name}:/content'
-        resp = requests.put(upload_url, headers=headers, data=data)
-        resp.raise_for_status()
+        for attempt in range(1, 5):
+            resp = requests.put(upload_url, headers=headers, data=data)
+            if resp.status_code == 423:
+                wait = attempt * 30
+                print(f'  [onedrive] {path.name} locked — retrying in {wait}s (attempt {attempt}/4)')
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            resp.raise_for_status()
         print(f'  [onedrive] Uploaded {path.name}')
 
 
