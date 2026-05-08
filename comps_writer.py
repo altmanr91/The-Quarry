@@ -12,16 +12,16 @@ def _fmt(ws, row, col_fmt_pairs):
     for col, fmt in col_fmt_pairs:
         ws.cell(row, col).number_format = fmt
 
-SALES_COLS  = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
+SALES_COLS  = ['Date', 'Property Name', 'Address', 'City', 'State', 'Property Type',
                'Size (SF)', 'Units', 'Sale Price', '$/SF', '$/Unit',
                'Year Built', 'Occupancy %', 'Buyer', 'Seller', 'Broker', 'Lender',
                'Source', 'Link', 'Notes']
 
-LEASES_COLS = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
+LEASES_COLS = ['Date', 'Property Name', 'Address', 'City', 'State', 'Property Type',
                'Size (SF)', 'Rent ($/SF/yr)', 'Tenants', 'Landlord', 'Tenant Rep', 'Landlord Broker',
                'Source', 'Link']
 
-LOANS_COLS  = ['Date', 'Property Name', 'Address', 'Market', 'Property Type',
+LOANS_COLS  = ['Date', 'Property Name', 'Address', 'City', 'State', 'Property Type',
                'Size (SF)', 'Units', 'Loan Amount', 'Loan/SF', 'Loan/Unit',
                'Borrower/Sponsor', 'Lender', 'Source', 'Link', 'Notes']
 
@@ -52,8 +52,17 @@ def _calc(numerator, denominator):
     return None
 
 
+def _split_market(market):
+    """Split 'Dallas, TX' into ('Dallas', 'TX'). Returns (city, state)."""
+    if not market:
+        return None, None
+    parts = market.rsplit(',', 1)
+    city  = parts[0].strip() if parts else None
+    state = parts[1].strip() if len(parts) > 1 else None
+    return city, state
+
+
 def _load_addresses(ws, addr_col_idx):
-    """Return dict mapping address_lower -> [row_numbers] for all data rows."""
     result = {}
     for row_num in range(2, ws.max_row + 1):
         addr = str(ws.cell(row_num, addr_col_idx).value or '').strip().lower()
@@ -68,8 +77,7 @@ def _highlight_row(ws, row_num):
 
 
 def _check_duplicate(ws, addr_map, address, addr_col_idx):
-    """Append new row, highlight it and any prior rows with the same address."""
-    new_row = ws.max_row
+    new_row   = ws.max_row
     addr_lower = (address or '').strip().lower()
     if not addr_lower:
         return
@@ -86,15 +94,15 @@ def _purge_no_basis(wb: Workbook) -> int:
     """Remove existing rows that lack a financial basis. Returns count removed."""
     removed = 0
     checks = [
-        ('Sales',  8, 5),   # Sale Price, Property Type
-        ('Leases', 6, None),
-        ('Loans',  8, None),
+        ('Sales',  9, 6),   # Sale Price col 9, Property Type col 6
+        ('Leases', 7, None),  # Size (SF) col 7
+        ('Loans',  9, None),  # Loan Amount col 9
     ]
     for sheet_name, basis_col, type_col in checks:
         if sheet_name not in wb.sheetnames:
             continue
         ws = wb[sheet_name]
-        for row in range(ws.max_row, 1, -1):  # bottom-up to preserve indices
+        for row in range(ws.max_row, 1, -1):
             no_basis = not ws.cell(row, basis_col).value
             no_type  = type_col and not ws.cell(row, type_col).value
             if no_basis or no_type:
@@ -104,15 +112,10 @@ def _purge_no_basis(wb: Workbook) -> int:
 
 
 def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
-    """
-    Append new comp rows from articles_handoff.json to the comps workbook.
-    Returns counts: {'sales': N, 'leases': N, 'loans': N}
-    """
     sales_ws  = _get_or_create_tab(wb, 'Sales',  SALES_COLS)
     leases_ws = _get_or_create_tab(wb, 'Leases', LEASES_COLS)
     loans_ws  = _get_or_create_tab(wb, 'Loans',  LOANS_COLS)
 
-    # Address column index: 3 (C) in all tabs
     sales_addrs  = _load_addresses(sales_ws,  3)
     leases_addrs = _load_addresses(leases_ws, 3)
     loans_addrs  = _load_addresses(loans_ws,  3)
@@ -124,11 +127,12 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
         if tx not in SALE_TYPES | LEASE_TYPES | LOAN_TYPES:
             continue
 
-        dp   = article.get('data_points') or {}
-        cp   = article.get('companies_people') or []
-        addr = dp.get('address') or ''
+        dp    = article.get('data_points') or {}
+        cp    = article.get('companies_people') or []
+        addr  = dp.get('address') or ''
         name  = dp.get('property_name') or (addr.split(',')[0].strip() if addr else None)
         ptype = dp.get('property_type', '').title() if dp.get('property_type') else None
+        city, state = _split_market(article.get('market'))
 
         if tx in SALE_TYPES:
             if not dp.get('sale_price') or not dp.get('property_type'):
@@ -137,7 +141,8 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 date_str,
                 name,
                 addr,
-                article.get('market'),
+                city,
+                state,
                 ptype,
                 dp.get('size_sf'),
                 dp.get('size_units'),
@@ -156,11 +161,11 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             ])
             _check_duplicate(sales_ws, sales_addrs, addr, 3)
             _fmt(sales_ws, sales_ws.max_row, [
-                (6, FMT_COMMA),    # Size (SF)
-                (8, FMT_DOLLARS),  # Sale Price
-                (9, FMT_DOLLARS),  # $/SF
-                (10, FMT_DOLLARS), # $/Unit
-                (12, FMT_PCT),     # Occupancy %
+                (7, FMT_COMMA),    # Size (SF)
+                (9, FMT_DOLLARS),  # Sale Price
+                (10, FMT_DOLLARS), # $/SF
+                (11, FMT_DOLLARS), # $/Unit
+                (13, FMT_PCT),     # Occupancy %
             ])
             counts['sales'] += 1
 
@@ -172,7 +177,8 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 date_str,
                 name,
                 addr,
-                article.get('market'),
+                city,
+                state,
                 ptype,
                 dp.get('size_sf'),
                 dp.get('rental_rate'),
@@ -185,8 +191,8 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             ])
             _check_duplicate(leases_ws, leases_addrs, addr, 3)
             _fmt(leases_ws, leases_ws.max_row, [
-                (6, FMT_COMMA),    # Size (SF)
-                (7, FMT_DOLLARS),  # Rent ($/SF/yr)
+                (7, FMT_COMMA),    # Size (SF)
+                (8, FMT_DOLLARS),  # Rent ($/SF/yr)
             ])
             counts['leases'] += 1
 
@@ -197,7 +203,8 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
                 date_str,
                 name,
                 addr,
-                article.get('market'),
+                city,
+                state,
                 ptype,
                 dp.get('size_sf'),
                 dp.get('size_units'),
@@ -212,10 +219,10 @@ def append_articles(date_str: str, articles: list, wb: Workbook) -> dict:
             ])
             _check_duplicate(loans_ws, loans_addrs, addr, 3)
             _fmt(loans_ws, loans_ws.max_row, [
-                (6, FMT_COMMA),    # Size (SF)
-                (8, FMT_DOLLARS),  # Loan Amount
-                (9, FMT_DOLLARS),  # Loan/SF
-                (10, FMT_DOLLARS), # Loan/Unit
+                (7, FMT_COMMA),    # Size (SF)
+                (9, FMT_DOLLARS),  # Loan Amount
+                (10, FMT_DOLLARS), # Loan/SF
+                (11, FMT_DOLLARS), # Loan/Unit
             ])
             counts['loans'] += 1
 
